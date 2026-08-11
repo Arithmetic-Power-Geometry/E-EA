@@ -1,0 +1,19 @@
+{
+  "seed": 20260811,
+  "requested_pairs": 1000,
+  "actual_pairs": 1000,
+  "categories": {
+    "Age": 91,
+    "Disability_status": 91,
+    "Gender_identity": 91,
+    "Nationality": 91,
+    "Physical_appearance": 91,
+    "Race_ethnicity": 91,
+    "Race_x_SES": 91,
+    "Race_x_gender": 91,
+    "Religion": 91,
+    "SES": 91,
+    "Sexual_orientation": 90
+  },
+  "source": "BBQ supplied project snapshot"
+}
