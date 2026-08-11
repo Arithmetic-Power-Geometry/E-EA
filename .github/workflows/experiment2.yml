@@ -65,29 +65,27 @@ jobs:
           path: outputs/current_llm/
           if-no-files-found: warn
 
-  mistral:
-    if: ${{ inputs.model == 'all' || inputs.model == 'mistral' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    env:
-      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.11", cache: pip}
-      - run: pip install -r requirements.txt
-      - run: test -n "$MISTRAL_API_KEY" || (echo "Set MISTRAL_API_KEY" && exit 1)
-      - name: Run
+        - name: Run Mistral
         run: |
           LIMIT=""
           if [ "${{ inputs.scope }}" = "smoke" ]; then LIMIT="--limit 10"; fi
           python code/run_all_current_llm.py --only mistral $LIMIT
-          python code/validate_current_llm.py --inputs outputs/current_llm/mistral_small_4_v26_03.jsonl $LIMIT
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload raw Mistral evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: experiment2-mistral-evidence
           path: outputs/current_llm/
-          if-no-files-found: error
+          if-no-files-found: warn
+
+      - name: Validate Mistral evidence
+        if: always()
+        run: |
+          LIMIT=""
+          if [ "${{ inputs.scope }}" = "smoke" ]; then LIMIT="--limit 10"; fi
+          python code/validate_current_llm.py \
+            --inputs outputs/current_llm/mistral_small_4_v26_03.jsonl $LIMIT
 
   qwen:
     if: ${{ inputs.model == 'all' || inputs.model == 'qwen' }}
