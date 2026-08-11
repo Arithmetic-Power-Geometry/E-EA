@@ -1,4 +1,4 @@
-name: Experiment 3 - Groq GPT-OSS rapid replication
+name: Experiment 3 - Groq GPT-OSS
 
 on:
   workflow_dispatch:
@@ -15,391 +15,79 @@ jobs:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
     steps:
-      # ---------------------------------------------------------
-      # 1. Repository and Python
-      # ---------------------------------------------------------
-
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: pip
 
-      - name: Install dependencies
+      - name: Install
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ---------------------------------------------------------
-      # 2. Check Groq access BEFORE spending requests
-      # ---------------------------------------------------------
-
-      - name: Check Groq API key
+      - name: Check API key
         run: |
-          test -n "$GROQ_API_KEY" || \
-          (echo "GROQ_API_KEY is not configured" && exit 1)
+          test -n "$GROQ_API_KEY" || exit 1
 
-      - name: Test Groq access
-        run: |
-          HTTP_CODE=$(curl -sS -o groq_models.json -w "%{http_code}" \
-            https://api.groq.com/openai/v1/models \
-            -H "Authorization: Bearer $GROQ_API_KEY")
-
-          echo "Groq HTTP status: $HTTP_CODE"
-
-          python - <<'PY'
-          import json
-
-          with open("groq_models.json", encoding="utf-8") as f:
-              data = json.load(f)
-
-          if "error" in data:
-              print("GROQ ERROR:")
-              print(json.dumps(data["error"], indent=2))
-              raise SystemExit(1)
-
-          models = [m["id"] for m in data.get("data", [])]
-
-          target = "openai/gpt-oss-20b"
-
-          print("Target model:", target)
-          print("Target available:", target in models)
-
-          if target not in models:
-              print("\nAvailable Groq models:")
-              for model in models:
-                  print(" -", model)
-              raise SystemExit(1)
-          PY
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            exit 1
-          fi
-
-      # ---------------------------------------------------------
-      # 3. Build frozen 99-pair stratified subset
-      #    9 pairs x 11 BBQ categories = 99 pairs
-      # ---------------------------------------------------------
-
-      - name: Build frozen 99-pair subset
+      - name: Build 99-pair subset
         run: |
           python -u code/build_groq_subset.py
 
-          echo
-          echo "Checking frozen subset..."
-
-          python - <<'PY'
-          import json
-          from collections import Counter
-          from pathlib import Path
-
-          p = Path("current_llm/groq_99_pair_subset.jsonl")
-
-          rows = [
-              json.loads(x)
-              for x in p.read_text(encoding="utf-8").splitlines()
-              if x.strip()
-          ]
-
-          print("Pairs:", len(rows))
-
-          counts = Counter(r["category"] for r in rows)
-
-          print("Categories:", len(counts))
-
-          for category in sorted(counts):
-              print(f"{category}: {counts[category]} pairs")
-
-          assert len(rows) == 99, \
-              f"Expected 99 pairs, found {len(rows)}"
-
-          assert len(counts) == 11, \
-              f"Expected 11 categories, found {len(counts)}"
-
-          assert all(v == 9 for v in counts.values()), \
-              "Each category must contribute exactly 9 pairs"
-
-          print("Frozen subset validation: PASS")
-          PY
-
-      # ---------------------------------------------------------
-      # 4. Run GPT-OSS-20B
-      #    99 pairs x 3 replicates = 297 records
-      #
-      #    python -u forces LIVE GitHub progress
-      # ---------------------------------------------------------
-
-      - name: Run GPT-OSS-20B - 297 records
-        id: inference
+      - name: Run 297 responses
         continue-on-error: true
         run: |
-          echo "=============================================="
-          echo "Experiment 3"
-          echo "Model: openai/gpt-oss-20b"
-          echo "Pairs: 99"
-          echo "Replicates per pair: 3"
-          echo "Expected pair-replicate records: 297"
-          echo "=============================================="
-
+          echo "99 pairs × 3 replicates = 297 responses"
           python -u code/run_groq_experiment3.py
 
-      # ---------------------------------------------------------
-      # 5. ALWAYS SAVE RAW EVIDENCE BEFORE VALIDATION
-      # ---------------------------------------------------------
-
-      - name: Show raw output status
+      - name: Show result
         if: always()
         run: |
-          echo "=============================================="
-          echo "RAW OUTPUT STATUS"
-          echo "=============================================="
+          echo "=== EXPERIMENT 3 STATUS ==="
 
           if [ -f outputs/experiment3/groq_gpt_oss_20b.jsonl ]; then
-            COUNT=$(grep -cve '^[[:space:]]*$' \
-              outputs/experiment3/groq_gpt_oss_20b.jsonl || true)
-
-            echo "Successful raw records: $COUNT / 297"
+            echo -n "Successful records: "
+            wc -l < outputs/experiment3/groq_gpt_oss_20b.jsonl
           else
-            echo "Successful evidence file not found."
+            echo "Successful records: 0"
           fi
 
           if [ -f outputs/experiment3/groq_gpt_oss_20b.errors.jsonl ]; then
-            ERRORS=$(grep -cve '^[[:space:]]*$' \
-              outputs/experiment3/groq_gpt_oss_20b.errors.jsonl || true)
-
-            echo "Recorded errors: $ERRORS"
-
-            echo
-            echo "First five errors:"
-            head -5 outputs/experiment3/groq_gpt_oss_20b.errors.jsonl
-          else
-            echo "Recorded errors: 0"
+            echo -n "Errors: "
+            wc -l < outputs/experiment3/groq_gpt_oss_20b.errors.jsonl
+            echo "First error:"
+            head -1 outputs/experiment3/groq_gpt_oss_20b.errors.jsonl
           fi
 
-      - name: Upload raw Experiment 3 evidence
+      - name: Upload raw evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: experiment3-groq-raw-evidence
+          name: experiment3-groq-raw
           path: |
             outputs/experiment3/
             current_llm/groq_99_pair_subset.jsonl
-          if-no-files-found: warn
-          retention-days: 30
 
-      # ---------------------------------------------------------
-      # 6. Strict Experiment-3 validation
-      # ---------------------------------------------------------
-
-      - name: Validate Experiment 3
-        id: validation
+      - name: Validate
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from collections import Counter
+          python code/validate_current_llm.py \
+            --inputs outputs/experiment3/groq_gpt_oss_20b.jsonl \
+            --subset current_llm/groq_99_pair_subset.jsonl \
+            --replicates 3
 
-          subset_path = Path(
-              "current_llm/groq_99_pair_subset.jsonl"
-          )
-
-          evidence_path = Path(
-              "outputs/experiment3/groq_gpt_oss_20b.jsonl"
-          )
-
-          if not evidence_path.exists():
-              raise SystemExit(
-                  "VALIDATION FAILED: "
-                  "successful evidence file does not exist."
-              )
-
-          subset = [
-              json.loads(x)
-              for x in subset_path.read_text(
-                  encoding="utf-8"
-              ).splitlines()
-              if x.strip()
-          ]
-
-          rows = [
-              json.loads(x)
-              for x in evidence_path.read_text(
-                  encoding="utf-8"
-              ).splitlines()
-              if x.strip()
-          ]
-
-          expected = {
-              (row["pair_uid"], replicate)
-              for row in subset
-              for replicate in range(3)
-          }
-
-          observed = []
-
-          unparsable = []
-
-          required_predictions = [
-              "ambig_pred",
-              "disambig_pred",
-              "update_initial_pred",
-              "update_final_pred",
-          ]
-
-          for row in rows:
-
-              key = (
-                  row.get("pair_uid"),
-                  row.get("replicate")
-              )
-
-              observed.append(key)
-
-              if any(
-                  row.get(field) not in {0, 1, 2}
-                  for field in required_predictions
-              ):
-                  unparsable.append(row)
-
-          observed_set = set(observed)
-
-          missing = sorted(expected - observed_set)
-
-          duplicates = len(observed) - len(observed_set)
-
-          out_of_scope = sorted(
-              observed_set - expected
-          )
-
-          print("==============================================")
-          print("EXPERIMENT 3 VALIDATION")
-          print("==============================================")
-          print(f"Expected records:       {len(expected)}")
-          print(f"Observed records:       {len(rows)}")
-          print(f"Missing records:        {len(missing)}")
-          print(f"Duplicate records:      {duplicates}")
-          print(f"Out-of-scope records:   {len(out_of_scope)}")
-          print(f"Unparseable records:    {len(unparsable)}")
-          print(
-              "Parse rate:             "
-              f"{100*(len(rows)-len(unparsable))/len(expected):.3f}%"
-          )
-
-          diagnostic_dir = Path("outputs/experiment3")
-          diagnostic_dir.mkdir(
-              parents=True,
-              exist_ok=True
-          )
-
-          with (
-              diagnostic_dir /
-              "missing_records.jsonl"
-          ).open("w", encoding="utf-8") as f:
-
-              for pair_uid, replicate in missing:
-                  f.write(json.dumps({
-                      "pair_uid": pair_uid,
-                      "replicate": replicate
-                  }) + "\n")
-
-          with (
-              diagnostic_dir /
-              "unparseable_records.jsonl"
-          ).open("w", encoding="utf-8") as f:
-
-              for row in unparsable:
-                  f.write(
-                      json.dumps(
-                          row,
-                          ensure_ascii=False
-                      ) + "\n"
-                  )
-
-          if missing:
-              print("\nMISSING RECORDS:")
-              for pair_uid, replicate in missing:
-                  print(
-                      f" - {pair_uid} | "
-                      f"replicate={replicate}"
-                  )
-
-          if unparsable:
-              print("\nUNPARSEABLE RECORDS:")
-              for row in unparsable:
-                  print(
-                      " - "
-                      f"{row.get('pair_uid')} | "
-                      f"replicate={row.get('replicate')}"
-                  )
-
-          if (
-              len(rows) != 297
-              or missing
-              or duplicates
-              or out_of_scope
-              or unparsable
-          ):
-              raise SystemExit(
-                  "\nVALIDATION FAILED. "
-                  "Raw evidence has already been preserved."
-              )
-
-          print()
-          print("VALIDATION PASSED: 297/297")
-          print("All records fully parseable.")
-          PY
-
-      # ---------------------------------------------------------
-      # Save diagnostics even if strict validation fails
-      # ---------------------------------------------------------
-
-      - name: Upload validation diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: experiment3-groq-validation-diagnostics
-          path: |
-            outputs/experiment3/missing_records.jsonl
-            outputs/experiment3/unparseable_records.jsonl
-          if-no-files-found: warn
-          retention-days: 30
-
-      # ---------------------------------------------------------
-      # 7. Generate publication tables and figures
-      #    ONLY after validation passes
-      # ---------------------------------------------------------
-
-      - name: Analyze Experiment 3
+      - name: Analyze
         if: success()
         run: |
-          mkdir -p results/experiment3
-
-          python -u code/analyze_current_llm.py \
+          python code/analyze_current_llm.py \
             --inputs outputs/experiment3/groq_gpt_oss_20b.jsonl \
             --outdir results/experiment3 \
             --strict
 
-      - name: List publication outputs
-        if: success()
-        run: |
-          echo "=============================================="
-          echo "EXPERIMENT 3 PUBLICATION OUTPUTS"
-          echo "=============================================="
-
-          find results/experiment3 \
-            -type f \
-            -maxdepth 3 \
-            -print \
-            | sort
-
-      - name: Upload Experiment 3 publication outputs
+      - name: Upload results
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: experiment3-groq-publication-outputs
+          name: experiment3-groq-results
           path: results/experiment3/
-          if-no-files-found: error
-          retention-days: 30
