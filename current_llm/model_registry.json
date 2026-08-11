@@ -1,0 +1,50 @@
+{
+  "experiment": "E-EA prospective contemporary-LLM validation",
+  "frozen_date": "2026-08-11",
+  "models": [
+    {
+      "key": "deepseek",
+      "name": "DeepSeek-V4-Flash",
+      "model_id": "deepseek-v4-flash",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "mode": "api",
+      "request_overrides": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "workers": 4
+    },
+    {
+      "key": "mistral",
+      "name": "Mistral Small 4 v26.03",
+      "model_id": "mistral-small-2603",
+      "base_url": "https://api.mistral.ai/v1",
+      "api_key_env": "MISTRAL_API_KEY",
+      "mode": "api",
+      "request_overrides": {},
+      "workers": 4
+    },
+    {
+      "key": "qwen",
+      "name": "Qwen3.5-4B",
+      "model_id": "Qwen/Qwen3.5-4B",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "base_url_env": "QWEN_BASE_URL",
+      "api_key_env": "QWEN_API_KEY",
+      "mode": "openai_compatible",
+      "request_overrides": {},
+      "workers": 2
+    }
+  ],
+  "sampling": {
+    "pairs": 1000,
+    "replicates": 3,
+    "temperature": 0.7,
+    "max_tokens": 16,
+    "timeout_seconds": 120,
+    "retries": 5,
+    "retry_backoff_seconds": 2.0
+  }
+}
