@@ -34,6 +34,129 @@ jobs:
           test -n "$GROQ_API_KEY" || \
           (echo "GROQ_API_KEY is not configured" && exit 1)
 
+name: Experiment 3 - Groq GPT-OSS rapid replication
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  groq:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check Groq API key
+        run: |
+          test -n "$GROQ_API_KEY" || \
+          (echo "GROQ_API_KEY is not configured" && exit 1)
+
+      - name: Test Groq access
+        run: |
+          echo "Testing Groq API..."
+
+          HTTP_CODE=$(curl -sS -o groq_models.json -w "%{http_code}" \
+            https://api.groq.com/openai/v1/models \
+            -H "Authorization: Bearer $GROQ_API_KEY")
+
+          echo "HTTP status: $HTTP_CODE"
+
+          python - <<'PY'
+          import json
+
+          with open("groq_models.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          if "error" in data:
+              print("GROQ ERROR:")
+              print(json.dumps(data["error"], indent=2))
+          else:
+              models = [m["id"] for m in data.get("data", [])]
+
+              print("AVAILABLE MODELS:")
+              for m in models:
+                  print(" -", m)
+
+              target = "openai/gpt-oss-20b"
+              print()
+              print("TARGET MODEL AVAILABLE:", target in models)
+          PY
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Groq API access test FAILED."
+            exit 1
+          fi
+
+      - name: Build 99-pair stratified subset
+        run: |
+          python code/build_groq_subset.py
+
+      - name: Run Groq GPT-OSS-20B
+        run: |
+          python -u code/run_groq_experiment3.py
+
+      - name: Upload raw Experiment 3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: experiment3-groq-evidence
+          path: outputs/experiment3/
+          if-no-files-found: warn
+
+      - name: Validate Experiment 3
+        if: always()
+        run: |
+          if [ -f outputs/experiment3/groq_gpt_oss_20b.jsonl ]; then
+            python code/validate_current_llm.py \
+              --inputs outputs/experiment3/groq_gpt_oss_20b.jsonl \
+              --subset current_llm/groq_99_pair_subset.jsonl \
+              --replicates 3
+          else
+            echo "No successful Groq evidence file was created."
+
+            if [ -f outputs/experiment3/groq_gpt_oss_20b.errors.jsonl ]; then
+              echo "First Groq errors:"
+              head -10 outputs/experiment3/groq_gpt_oss_20b.errors.jsonl
+            fi
+
+            exit 1
+          fi
+
+      - name: Analyze Experiment 3
+        if: success()
+        run: |
+          python code/analyze_current_llm.py \
+            --inputs outputs/experiment3/groq_gpt_oss_20b.jsonl \
+            --outdir results/experiment3 \
+            --strict
+
+      - name: Upload Experiment 3 tables and figures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: experiment3-groq-publication-outputs
+          path: results/experiment3/
+          if-no-files-found: warn
+
       - name: Build 99-pair stratified subset
         run: |
           python code/build_groq_subset.py
