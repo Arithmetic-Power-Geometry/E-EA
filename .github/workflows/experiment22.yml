@@ -1,0 +1,150 @@
+name: Experiment 2 - contemporary LLMs
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model to run"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, deepseek, mistral, qwen]
+      scope:
+        description: "Smoke = 10 pairs; Full = frozen 1,000 pairs"
+        required: true
+        default: "smoke"
+        type: choice
+        options: [smoke, full]
+
+permissions:
+  contents: read
+
+jobs:
+  deepseek:
+    if: ${{ inputs.model == 'all' || inputs.model == 'deepseek' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - run: |
+          test -n "$DEEPSEEK_API_KEY" || (echo "Set DEEPSEEK_API_KEY" && exit 1)
+
+      - name: Run DeepSeek
+        run: |
+          LIMIT=""
+          if [ "${{ inputs.scope }}" = "smoke" ]; then LIMIT="--limit 10"; fi
+
+          python code/run_all_current_llm.py --only deepseek $LIMIT
+
+          echo "===== DeepSeek API errors ====="
+          if [ -f outputs/current_llm/deepseek_v4_flash.errors.jsonl ]; then
+            head -5 outputs/current_llm/deepseek_v4_flash.errors.jsonl
+          else
+            echo "No DeepSeek error file found."
+          fi
+
+          python code/validate_current_llm.py \
+            --inputs outputs/current_llm/deepseek_v4_flash.jsonl $LIMIT
+
+      - name: Upload DeepSeek evidence and error log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: experiment2-deepseek-evidence
+          path: outputs/current_llm/
+          if-no-files-found: warn
+
+  mistral:
+    if: ${{ inputs.model == 'all' || inputs.model == 'mistral' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - run: test -n "$MISTRAL_API_KEY" || (echo "Set MISTRAL_API_KEY" && exit 1)
+      - name: Run
+        run: |
+          LIMIT=""
+          if [ "${{ inputs.scope }}" = "smoke" ]; then LIMIT="--limit 10"; fi
+          python code/run_all_current_llm.py --only mistral $LIMIT
+          python code/validate_current_llm.py --inputs outputs/current_llm/mistral_small_4_v26_03.jsonl $LIMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experiment2-mistral-evidence
+          path: outputs/current_llm/
+          if-no-files-found: error
+
+  qwen:
+    if: ${{ inputs.model == 'all' || inputs.model == 'qwen' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
+      QWEN_BASE_URL: ${{ vars.QWEN_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - name: Check endpoint
+        run: |
+          test -n "$QWEN_API_KEY" || (echo "Set QWEN_API_KEY" && exit 1)
+          test -n "$QWEN_BASE_URL" || (echo "Set QWEN_BASE_URL" && exit 1)
+      - name: Run
+        run: |
+          LIMIT=""
+          if [ "${{ inputs.scope }}" = "smoke" ]; then LIMIT="--limit 10"; fi
+          python code/run_all_current_llm.py --only qwen $LIMIT
+          python code/validate_current_llm.py --inputs outputs/current_llm/qwen3_5_4b.jsonl $LIMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experiment2-qwen-evidence
+          path: outputs/current_llm/
+          if-no-files-found: error
+
+  analyze_all:
+    if: ${{ inputs.model == 'all' }}
+    needs: [deepseek, mistral, qwen]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: experiment2-*-evidence
+          path: gathered
+      - name: Gather
+        run: |
+          mkdir -p outputs/combined
+          find gathered -name '*.jsonl' ! -name '*.errors.jsonl' -exec cp {} outputs/combined/ \;
+      - name: Validate and render publication outputs
+        run: |
+          LIMIT=""
+          if [ "${{ inputs.scope }}" = "smoke" ]; then LIMIT="--limit 10"; fi
+          python code/validate_current_llm.py --inputs outputs/combined/*.jsonl $LIMIT
+          python code/analyze_current_llm.py --inputs outputs/combined/*.jsonl --outdir results/experiment2 --strict
+          python code/build_output_index.py --experiment1-root missing --experiment2-root results/experiment2 --combined-root missing
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experiment2-publication-outputs
+          path: |
+            results/experiment2/
+            results/OUTPUT_INDEX.md
+          if-no-files-found: error
